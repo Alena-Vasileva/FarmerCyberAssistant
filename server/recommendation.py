@@ -25,7 +25,20 @@ class RecommendationMaker:    # TODO: Test
                 locations.append(location)
                 weather_list = WeatherAPI.get_all_simple_predictions(location)
                 weather = WeatherForecaster.get_forecast(weather_list)
-                recommendations.append(RecommendationMaker.__get_recommendations(field, weather))
+                recommendations.append(RecommendationMaker.__get_caching_recommendations(field, weather))
+        return recommendations
+
+    @staticmethod
+    def __get_caching_recommendations(target_field, weather):
+        # get from cache
+        ok, ret = RecommendationCacher.get((target_field, weather))
+        if ok:
+            return ret
+
+        recommendations = RecommendationMaker.__get_recommendations(target_field, weather)
+        # save to cache
+        RecommendationCacher.set((target_field, weather), recommendations)
+
         return recommendations
 
     @staticmethod
@@ -100,3 +113,45 @@ class Recommendation:
 
     def get_object_dict(self):
         return self.__dict__
+
+
+class RecommendationCacher:
+    __recommendation_cache = []
+    __cache_ttl = 10_000
+    __max_cache_size = 1_000
+
+    @staticmethod
+    def get(key):
+        RecommendationCacher.invalidate()
+
+        for item in RecommendationCacher.__recommendation_cache:
+            if item.key == key:
+                return True, item.value
+
+        return False, None
+
+    @staticmethod
+    def set(key, value):
+        RecommendationCacher.__recommendation_cache.append(RecommendationCacher.CachedItem(key, value))
+
+        RecommendationCacher.invalidate()
+
+    @staticmethod
+    def invalidate():
+        new_cache = []
+        for item in RecommendationCacher.__recommendation_cache:
+            if item.cached_time + RecommendationCacher.__cache_ttl > time():
+                new_cache.append(item)
+
+        # сортируем от самого свежего, к менее свежему
+        new_cache.sort(key=lambda x: x.cached_time, reverse=True)
+
+        new_cache = new_cache[:min(len(new_cache), RecommendationCacher.__max_cache_size)]
+
+        RecommendationCacher.__recommendation_cache = new_cache
+
+    class CachedItem:
+        def __init__(self, key, value):
+            self.key = key
+            self.value = value
+            self.cached_time = time()
